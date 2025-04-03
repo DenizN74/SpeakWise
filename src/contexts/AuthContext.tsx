@@ -32,18 +32,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email: string, password: string, username: string, language: string) => {
-    const { data, error } = await supabase.auth.signUp({
+  const signUp = async (
+    email: string,
+    password: string,
+    username: string,
+    language: string
+  ) => {
+    const { error: signUpError } = await supabase.auth.signUp({
       email,
       password,
     });
 
-    if (error) throw error;
+    if (signUpError) throw signUpError;
 
-    const user = data.user;
+    // 👇 Garantili şekilde user alıyoruz
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+
+    if (userError) throw userError;
+
+    const user = userData.user;
 
     if (user) {
-      // Create user profile with language preference
       const { error: profileError } = await supabase
         .from('user_profiles')
         .insert([
@@ -58,7 +67,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           },
         ]);
 
-      if (profileError) throw profileError;
+      if (profileError) {
+        console.error('Profil oluşturulurken hata:', profileError.message);
+        throw profileError;
+      }
     }
   };
 
@@ -74,6 +86,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
+    setUser(null); // 👈 Çok kritik! State'i sıfırla!
   };
 
   return (
