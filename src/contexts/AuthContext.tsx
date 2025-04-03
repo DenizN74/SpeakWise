@@ -33,12 +33,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signUp = async (email: string, password: string, username: string, language: string) => {
-    const { data: { user }, error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
     });
 
     if (error) throw error;
+
+    const user = data.user;
 
     if (user) {
       // Create user profile with language preference
@@ -49,7 +51,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             id: user.id,
             username,
             level: 'beginner',
-            preferred_language: language
+            xp_points: 0,
+            streak_days: 0,
+            rank: 'rookie',
+            preferred_language: language,
           },
         ]);
 
