@@ -7,9 +7,6 @@ import {
   Calendar,
   BookOpen,
   Star,
-  TrendingUp,
-  Mic,
-  Brain,
   ChevronRight
 } from 'lucide-react';
 import {
@@ -27,32 +24,67 @@ import {
   Cell
 } from 'recharts';
 import { Database } from '../types/supabase';
-import { getPersonalizedRecommendations } from '../lib/ai';
 
-type UserProfile = Database['public']['Tables']['user_profiles']['Row'];
-type UserProgress = Database['public']['Tables']['user_progress']['Row'];
-type QuizResponse = Database['public']['Tables']['quiz_responses']['Row'];
-type PronunciationAssessment = Database['public']['Tables']['pronunciation_assessments']['Row'];
-type ContentRecommendation = Database['public']['Tables']['content_recommendations']['Row'];
+type Tables = Database['public']['Tables'];
+type UserProfile = Tables['user_profiles']['Row'];
+type UserProgress = Tables['user_progress']['Row'] & {
+  lessons: Tables['lessons']['Row'] | null;
+};
+type QuizResponse = Tables['quiz_responses']['Row'];
+type PronunciationData = {
+  date: string;
+  score: number;
+};
+
+interface Recommendation {
+  id: string;
+  reason: {
+    title: string;
+    description: string;
+  };
+  confidence_score: number;
+}
+
+interface LevelProgress {
+  total: number;
+  completed: number;
+}
+
+interface ProgressByLevel {
+  [key: string]: LevelProgress;
+}
+
+interface ChartDataPoint {
+  level: string;
+  completed: number;
+  remaining: number;
+}
+
+interface QuizPerformanceData {
+  name: string;
+  value: number;
+}
 
 export const Dashboard: React.FC = () => {
   const { user } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [progress, setProgress] = useState<UserProgress[]>([]);
   const [quizResponses, setQuizResponses] = useState<QuizResponse[]>([]);
-  const [pronunciationAssessments, setPronunciationAssessments] = useState<PronunciationAssessment[]>([]);
-  const [recommendations, setRecommendations] = useState<ContentRecommendation[]>([]);
+  const [pronunciationData, setPronunciationData] = useState<PronunciationData[]>([]);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
     const fetchUserData = async () => {
+      if (!user?.id) return;
+
       try {
         // Fetch user profile
         const { data: profileData, error: profileError } = await supabase
           .from('user_profiles')
           .select('*')
-          .eq('id', user?.id)
+          .eq('id', user.id)
           .single();
 
         if (profileError) throw profileError;
@@ -62,7 +94,7 @@ export const Dashboard: React.FC = () => {
         const { data: progressData, error: progressError } = await supabase
           .from('user_progress')
           .select('*, lessons(*)')
-          .eq('user_id', user?.id);
+          .eq('user_id', user.id);
 
         if (progressError) throw progressError;
         setProgress(progressData);
@@ -71,43 +103,51 @@ export const Dashboard: React.FC = () => {
         const { data: quizData, error: quizError } = await supabase
           .from('quiz_responses')
           .select('*')
-          .eq('user_id', user?.id)
+          .eq('user_id', user.id)
           .order('created_at', { ascending: false });
 
         if (quizError) throw quizError;
-        setQuizResponses(quizData);
+        setQuizResponses(quizData || []);
 
         // Fetch pronunciation assessments
-        const { data: pronunciationData, error: pronunciationError } = await supabase
+        const { data: pronunciationAssessments, error: pronunciationError } = await supabase
           .from('pronunciation_assessments')
           .select('*')
-          .eq('user_id', user?.id)
+          .eq('user_id', user.id)
           .order('created_at', { ascending: true });
 
         if (pronunciationError) throw pronunciationError;
-        setPronunciationAssessments(pronunciationData);
+        
+        const formattedPronunciationData = (pronunciationAssessments || []).map(assessment => ({
+          date: new Date(assessment.created_at).toLocaleDateString(),
+          score: (assessment.score || 0) * 100
+        }));
+        setPronunciationData(formattedPronunciationData);
+
+        // Fetch AI recommendations
+        try {
+          const { data: recommendationsData } = await supabase
+            .from('content_recommendations')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('confidence_score', { ascending: false })
+            .limit(6);
+
+          setRecommendations(recommendationsData || []);
+        } catch (recError) {
+          console.error('Error fetching recommendations:', recError);
+          setRecommendations([]);
+        }
 
       } catch (err) {
         console.error('Error fetching user data:', err);
         setError('Failed to load user data');
       } finally {
-        // Fetch AI recommendations separately so main data still loads if it fails
-        if (user) {
-          try {
-            const recommendationsData = await getPersonalizedRecommendations(user.id);
-            setRecommendations(recommendationsData);
-          } catch (err) {
-            console.error('Error fetching AI recommendations:', err);
-            setRecommendations([]); // Fallback to empty array if recommendations fail
-          }
-        }
         setLoading(false);
       }
     };
 
-    if (user) {
-      fetchUserData();
-    }
+    fetchUserData();
   }, [user]);
 
   if (loading) {
@@ -127,12 +167,12 @@ export const Dashboard: React.FC = () => {
   }
 
   const completedLessons = progress.filter(p => p.completed).length;
-  const totalScore = progress.reduce((sum, p) => sum + p.score, 0);
+  
   const averageQuizScore = quizResponses.length > 0
-    ? quizResponses.reduce((sum, q) => sum + q.score, 0) / quizResponses.length
+    ? quizResponses.reduce((sum, q) => sum + (q.score || 0), 0) / quizResponses.length
     : 0;
 
-  const progressByLevel = progress.reduce((acc, p: any) => {
+  const progressByLevel = progress.reduce<ProgressByLevel>((acc, p) => {
     const level = p.lessons?.level || 'unknown';
     if (!acc[level]) {
       acc[level] = { total: 0, completed: 0 };
@@ -144,23 +184,18 @@ export const Dashboard: React.FC = () => {
     return acc;
   }, {});
 
-  const progressChartData = Object.entries(progressByLevel).map(([level, data]: [string, any]) => ({
+  const progressChartData: ChartDataPoint[] = Object.entries(progressByLevel).map(([level, data]) => ({
     level: level.charAt(0).toUpperCase() + level.slice(1),
     completed: data.completed,
     remaining: data.total - data.completed,
   }));
 
-  const pronunciationChartData = pronunciationAssessments.map(assessment => ({
-    date: new Date(assessment.created_at).toLocaleDateString(),
-    score: assessment.score * 100,
-  }));
-
-  const quizPerformanceData = [
+  const quizPerformanceData: QuizPerformanceData[] = [
     { name: 'Correct', value: Math.round(averageQuizScore * 100) },
     { name: 'Incorrect', value: Math.round((1 - averageQuizScore) * 100) },
   ];
 
-  const COLORS = ['#4F46E5', '#E5E7EB'];
+  const COLORS = ['#4F46E5', '#E5E7EB'] as const;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -252,7 +287,7 @@ export const Dashboard: React.FC = () => {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {quizPerformanceData.map((entry, index) => (
+                  {quizPerformanceData.map((_entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
@@ -280,7 +315,7 @@ export const Dashboard: React.FC = () => {
         </h2>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={pronunciationChartData}>
+            <LineChart data={pronunciationData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
               <YAxis domain={[0, 100]} />
