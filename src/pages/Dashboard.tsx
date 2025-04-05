@@ -87,15 +87,20 @@ export const Dashboard: React.FC = () => {
         if (pronunciationError) throw pronunciationError;
         setPronunciationAssessments(pronunciationData);
 
-        // Fetch AI recommendations
-        if (user) {
-          const recommendationsData = await getPersonalizedRecommendations(user.id);
-          setRecommendations(recommendationsData);
-        }
       } catch (err) {
         console.error('Error fetching user data:', err);
         setError('Failed to load user data');
       } finally {
+        // Fetch AI recommendations separately so main data still loads if it fails
+        if (user) {
+          try {
+            const recommendationsData = await getPersonalizedRecommendations(user.id);
+            setRecommendations(recommendationsData);
+          } catch (err) {
+            console.error('Error fetching AI recommendations:', err);
+            setRecommendations([]); // Fallback to empty array if recommendations fail
+          }
+        }
         setLoading(false);
       }
     };

@@ -4,8 +4,24 @@ import { createClient } from 'npm:@supabase/supabase-js@2.39.7';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization'
 };
+
+interface PerformanceAnalysis {
+  averageScore: number;
+  weakAreas: string[];
+  progressVelocity: number;
+}
+
+interface Recommendation {
+  module_id: string;
+  confidence: number;
+  reason: {
+    weak_areas: string[];
+    performance: number;
+    velocity: number;
+  };
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -52,8 +68,8 @@ serve(async (req) => {
       }))
     );
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    return new Response(JSON.stringify(recommendations), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     });
   } catch (error) {
     return new Response(JSON.stringify({ error: error.message }), {
@@ -63,7 +79,7 @@ serve(async (req) => {
   }
 });
 
-function analyzePerformance(quizResponses: any[], progress: any[]) {
+function analyzePerformance(quizResponses: any[], progress: any[]): PerformanceAnalysis {
   // Analyze recent performance trends
   const recentScores = quizResponses.map(r => r.score);
   const averageScore = recentScores.reduce((a, b) => a + b, 0) / recentScores.length;
@@ -119,7 +135,7 @@ function calculateProgressVelocity(progress: any[]) {
   return (completedLessons / (timeSpan / (1000 * 60 * 60 * 24))); // Lessons per day
 }
 
-async function generateRecommendations(analysis: any, supabase: any) {
+async function generateRecommendations(analysis: PerformanceAnalysis, supabase: any): Promise<Recommendation[]> {
   const { data: modules } = await supabase
     .from('lesson_modules')
     .select('*')

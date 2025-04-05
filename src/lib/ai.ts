@@ -1,12 +1,31 @@
 import { supabase } from './supabase';
 
-export async function getPersonalizedRecommendations(userId: string) {
-  const { data, error } = await supabase.functions.invoke('content-recommender', {
-    body: { user_id: userId }
-  });
+interface Recommendation {
+  module_id: string;
+  confidence: number;
+  reason: {
+    weak_areas: string[];
+    performance: number;
+    velocity: number;
+  };
+}
 
-  if (error) throw error;
-  return data;
+export async function getPersonalizedRecommendations(userId: string): Promise<Recommendation[]> {
+  try {
+    const { data, error } = await supabase.functions.invoke('content-recommender', {
+      body: { user_id: userId }
+    });
+    
+    if (error) {
+      console.error('Content recommender error:', error);
+      throw new Error('Failed to get personalized recommendations');
+    }
+    
+    return data || [];
+  } catch (err) {
+    console.error('Content recommender error:', err);
+    return [];
+  }
 }
 
 export async function analyzeWriting(userId: string, text: string) {
